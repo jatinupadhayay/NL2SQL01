@@ -96,7 +96,8 @@ vannadb/
 Thumbs.db
 desktop.ini
 ehthumbs.db
-
+*.csv
+c42d0ec1e6e11801/
 # ─────────────────────────────────────────────
 # Temporary / misc
 # ─────────────────────────────────────────────
