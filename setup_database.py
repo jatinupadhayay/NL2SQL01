@@ -71,7 +71,7 @@ def create_database():
     """)
 
     # 2. Insert Dummy Data
-    print("Generating dummy data...")
+    # print("Generating dummy data...")
 
     # Doctors (15 doctors, 5 specializations)
     specs = [
@@ -159,7 +159,7 @@ def create_database():
     conn.commit()
     
     # Verify counts
-    print("-" * 30)
+    # print("-" * 30)
     cursor.execute("SELECT COUNT(*) FROM patients")
     patients_count = cursor.fetchone()[0]
     cursor.execute("SELECT COUNT(*) FROM doctors")
@@ -172,8 +172,8 @@ def create_database():
     inv_count = cursor.fetchone()[0]
     
     print(f"Created {patients_count} patients, {doctors_count} doctors, {appts_count} appointments, {treats_count} treatments, {inv_count} invoices.")
-    print("✅ Database and tables created successfully with dummy data!")
-    print("-" * 30)
+    # print(" Database and tables created successfully with dummy data!")
+    # print("-" * 30)
 
     conn.close()
 
