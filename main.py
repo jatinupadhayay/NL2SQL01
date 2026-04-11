@@ -10,7 +10,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 import plotly.graph_objects as go
 from pydantic import BaseModel, Field, field_validator
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -22,6 +22,9 @@ from vanna.core.user import RequestContext
 from seed_memory import seed_memory_async
 from vanna_setup import agent
 
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)-8s  %(name)s — %(message)s",
@@ -29,6 +32,9 @@ logging.basicConfig(
 )
 log = logging.getLogger("nl2sql")
 
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 DB_PATH = Path(__file__).with_name("clinic.db")
 BLOCKED_SQL = (
     "INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "EXEC", "EXECUTE",
@@ -37,8 +43,14 @@ BLOCKED_SQL = (
 BLOCKED_PATTERNS = (r"\bxp_", r"\bsp_", r"\bsqlite_", r"\bsqlite_master\b")
 REQUEST_STATE: dict[str, dict[str, Any]] = {}
 
+# ---------------------------------------------------------------------------
+# Rate limiter
+# ---------------------------------------------------------------------------
 limiter = Limiter(key_func=get_remote_address)
 
+# ---------------------------------------------------------------------------
+# In-memory query cache  (exact question → response dict)
+# ---------------------------------------------------------------------------
 _CACHE: dict[str, dict[str, Any]] = {}
 _CACHE_MAX = 128
 
@@ -49,10 +61,15 @@ def _cache_get(key: str) -> dict[str, Any] | None:
 
 def _cache_set(key: str, value: dict[str, Any]) -> None:
     if len(_CACHE) >= _CACHE_MAX:
+        # evict oldest inserted key
         oldest = next(iter(_CACHE))
         _CACHE.pop(oldest, None)
     _CACHE[key] = value
 
+
+# ---------------------------------------------------------------------------
+# Request / response models
+# ---------------------------------------------------------------------------
 class ChatRequest(BaseModel):
     question: str = Field(..., max_length=500)
 
@@ -65,11 +82,15 @@ class ChatRequest(BaseModel):
         return value
 
 
+# ---------------------------------------------------------------------------
+# SQL validation
+# ---------------------------------------------------------------------------
 def validate_sql(sql: str) -> str | None:
     """Return an error string if SQL is unsafe, else None."""
     text = sql.strip()
     if not text:
         return "Invalid SQL generated."
+    # block multiple statements
     if ";" in text.rstrip(";"):
         return "Only a single SELECT query is allowed."
     upper = text.upper()
@@ -86,6 +107,9 @@ def validate_sql(sql: str) -> str | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# SQL guard — monkey-patches ToolRegistry once at startup
+# ---------------------------------------------------------------------------
 def install_sql_guard() -> None:
     registry = getattr(agent, "tool_registry", None)
     if not registry or getattr(registry, "_sql_guard_installed", False):
@@ -137,6 +161,9 @@ def install_sql_guard() -> None:
     log.info("SQL guard installed on ToolRegistry")
 
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 def get_memory_count() -> int:
     memory = getattr(agent, "agent_memory", None) or getattr(agent, "memory", None)
     if memory is None:
@@ -189,6 +216,9 @@ def build_chart(columns: list[str], rows: list[dict[str, Any]]) -> dict[str, Any
     return fig.to_plotly_json()
 
 
+# ---------------------------------------------------------------------------
+# App setup
+# ---------------------------------------------------------------------------
 install_sql_guard()
 app = FastAPI(
     title="NL2SQL Clinic API",
@@ -209,12 +239,24 @@ async def startup() -> None:
     log.info("Startup complete — memory items: %d", get_memory_count())
 
 
+# ---------------------------------------------------------------------------
+# Frontend
+# ---------------------------------------------------------------------------
+@app.get("/", response_class=FileResponse)
+async def read_root():
+    return "index.html"
+
+
+# ---------------------------------------------------------------------------
+# /chat
+# ---------------------------------------------------------------------------
 @app.post("/chat")
 @limiter.limit("30/minute")
 async def chat(payload: ChatRequest, request: Request) -> dict[str, Any]:
     question = payload.question
     cache_key = question.lower().strip()
 
+    # --- cache hit ---
     cached = _cache_get(cache_key)
     if cached:
         log.info("Cache hit for question: %s", question[:60])
@@ -292,6 +334,9 @@ async def chat(payload: ChatRequest, request: Request) -> dict[str, Any]:
     return response
 
 
+# ---------------------------------------------------------------------------
+# /health
+# ---------------------------------------------------------------------------
 @app.get("/health")
 async def health() -> dict[str, Any]:
     return {
