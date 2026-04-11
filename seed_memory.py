@@ -13,10 +13,6 @@ from vanna.core.user import User
 from vanna_setup import agent
 
 
-# ---------------------------------------------------------------------------
-# 17 curated question → SQL pairs
-# Covers: patients, doctors, appointments, financial, time-based queries
-# ---------------------------------------------------------------------------
 EXAMPLES = [
     # --- Patient queries ---
     (
@@ -133,6 +129,98 @@ EXAMPLES = [
            FROM patients
            GROUP BY month
            ORDER BY month""",
+    ),
+    # --- Multi-table JOIN examples (treatments -> appointments -> patients/doctors) ---
+    (
+        "Top 5 patients by total spending",
+        """SELECT p.first_name, p.last_name, ROUND(SUM(t.cost), 2) AS total_spending
+           FROM treatments t
+           JOIN appointments a ON t.appointment_id = a.id
+           JOIN patients p ON a.patient_id = p.id
+           GROUP BY p.id, p.first_name, p.last_name
+           ORDER BY total_spending DESC
+           LIMIT 5""",
+    ),
+    (
+        "Average treatment cost by specialization",
+        """SELECT d.specialization, ROUND(AVG(t.cost), 2) AS avg_cost
+           FROM treatments t
+           JOIN appointments a ON t.appointment_id = a.id
+           JOIN doctors d ON a.doctor_id = d.id
+           GROUP BY d.specialization
+           ORDER BY avg_cost DESC""",
+    ),
+    (
+        "Show the busiest day of the week for appointments",
+        """SELECT CASE CAST(strftime('%w', appointment_date) AS INTEGER)
+                WHEN 0 THEN 'Sunday' WHEN 1 THEN 'Monday' WHEN 2 THEN 'Tuesday'
+                WHEN 3 THEN 'Wednesday' WHEN 4 THEN 'Thursday' WHEN 5 THEN 'Friday'
+                WHEN 6 THEN 'Saturday' END AS day_of_week,
+                COUNT(*) AS total
+           FROM appointments
+           GROUP BY day_of_week
+           ORDER BY total DESC""",
+    ),
+    (
+        "Compare revenue between departments",
+        """SELECT d.department, ROUND(SUM(i.total_amount), 2) AS total_revenue
+           FROM invoices i
+           JOIN appointments a ON a.patient_id = i.patient_id
+           JOIN doctors d ON d.id = a.doctor_id
+           GROUP BY d.department
+           ORDER BY total_revenue DESC""",
+    ),
+    (
+        "List patients with overdue invoices",
+        """SELECT DISTINCT p.first_name, p.last_name, p.email, p.phone
+           FROM patients p
+           JOIN invoices i ON i.patient_id = p.id
+           WHERE i.status = 'Overdue'
+           ORDER BY p.last_name""",
+    ),
+    (
+        "Patients who have never had an appointment",
+        """SELECT p.first_name, p.last_name, p.city
+           FROM patients p
+           WHERE p.id NOT IN (SELECT DISTINCT patient_id FROM appointments)""",
+    ),
+    (
+        "Total treatment cost per patient",
+        """SELECT p.first_name, p.last_name, ROUND(SUM(t.cost), 2) AS total_cost
+           FROM treatments t
+           JOIN appointments a ON t.appointment_id = a.id
+           JOIN patients p ON a.patient_id = p.id
+           GROUP BY p.id, p.first_name, p.last_name
+           ORDER BY total_cost DESC""",
+    ),
+    (
+        "How many patients registered this year?",
+        """SELECT COUNT(*) AS patients_this_year
+           FROM patients
+           WHERE strftime('%Y', registered_date) = strftime('%Y', 'now')""",
+    ),
+    (
+        "Total amount of overdue invoices",
+        """SELECT ROUND(SUM(total_amount - paid_amount), 2) AS total_overdue
+           FROM invoices
+           WHERE status = 'Overdue'""",
+    ),
+    (
+        "Most expensive treatment given",
+        """SELECT t.treatment_name, t.cost, p.first_name, p.last_name
+           FROM treatments t
+           JOIN appointments a ON t.appointment_id = a.id
+           JOIN patients p ON a.patient_id = p.id
+           ORDER BY t.cost DESC
+           LIMIT 1""",
+    ),
+    (
+        "Number of appointments by department",
+        """SELECT d.department, COUNT(*) AS appointment_count
+           FROM appointments a
+           JOIN doctors d ON a.doctor_id = d.id
+           GROUP BY d.department
+           ORDER BY appointment_count DESC""",
     ),
 ]
 

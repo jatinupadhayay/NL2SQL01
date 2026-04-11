@@ -22,9 +22,6 @@ from vanna.core.user import RequestContext
 from seed_memory import seed_memory_async
 from vanna_setup import agent
 
-# ---------------------------------------------------------------------------
-# Logging
-# ---------------------------------------------------------------------------
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)-8s  %(name)s — %(message)s",
@@ -32,9 +29,6 @@ logging.basicConfig(
 )
 log = logging.getLogger("nl2sql")
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
 DB_PATH = Path(__file__).with_name("clinic.db")
 BLOCKED_SQL = (
     "INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "EXEC", "EXECUTE",
@@ -43,14 +37,7 @@ BLOCKED_SQL = (
 BLOCKED_PATTERNS = (r"\bxp_", r"\bsp_", r"\bsqlite_", r"\bsqlite_master\b")
 REQUEST_STATE: dict[str, dict[str, Any]] = {}
 
-# ---------------------------------------------------------------------------
-# Rate limiter
-# ---------------------------------------------------------------------------
 limiter = Limiter(key_func=get_remote_address)
-
-# ---------------------------------------------------------------------------
-# In-memory query cache  (exact question → response dict)
-# ---------------------------------------------------------------------------
 _CACHE: dict[str, dict[str, Any]] = {}
 _CACHE_MAX = 128
 
@@ -67,9 +54,6 @@ def _cache_set(key: str, value: dict[str, Any]) -> None:
     _CACHE[key] = value
 
 
-# ---------------------------------------------------------------------------
-# Request / response models
-# ---------------------------------------------------------------------------
 class ChatRequest(BaseModel):
     question: str = Field(..., max_length=500)
 
@@ -82,9 +66,6 @@ class ChatRequest(BaseModel):
         return value
 
 
-# ---------------------------------------------------------------------------
-# SQL validation
-# ---------------------------------------------------------------------------
 def validate_sql(sql: str) -> str | None:
     """Return an error string if SQL is unsafe, else None."""
     text = sql.strip()
@@ -107,9 +88,6 @@ def validate_sql(sql: str) -> str | None:
     return None
 
 
-# ---------------------------------------------------------------------------
-# SQL guard — monkey-patches ToolRegistry once at startup
-# ---------------------------------------------------------------------------
 def install_sql_guard() -> None:
     registry = getattr(agent, "tool_registry", None)
     if not registry or getattr(registry, "_sql_guard_installed", False):
@@ -161,9 +139,6 @@ def install_sql_guard() -> None:
     log.info("SQL guard installed on ToolRegistry")
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 def get_memory_count() -> int:
     memory = getattr(agent, "agent_memory", None) or getattr(agent, "memory", None)
     if memory is None:
@@ -216,9 +191,6 @@ def build_chart(columns: list[str], rows: list[dict[str, Any]]) -> dict[str, Any
     return fig.to_plotly_json()
 
 
-# ---------------------------------------------------------------------------
-# App setup
-# ---------------------------------------------------------------------------
 install_sql_guard()
 app = FastAPI(
     title="NL2SQL Clinic API",
@@ -239,17 +211,6 @@ async def startup() -> None:
     log.info("Startup complete — memory items: %d", get_memory_count())
 
 
-# ---------------------------------------------------------------------------
-# Frontend
-# ---------------------------------------------------------------------------
-@app.get("/", response_class=FileResponse)
-async def read_root():
-    return "index.html"
-
-
-# ---------------------------------------------------------------------------
-# /chat
-# ---------------------------------------------------------------------------
 @app.post("/chat")
 @limiter.limit("30/minute")
 async def chat(payload: ChatRequest, request: Request) -> dict[str, Any]:
@@ -264,6 +225,9 @@ async def chat(payload: ChatRequest, request: Request) -> dict[str, Any]:
 
     log.info("Processing question: %s", question[:80])
     t0 = time.perf_counter()
+
+    import asyncio
+    await asyncio.sleep(2) # Added a 2-second delay to avoid hitting LLM API rate limits
 
     conversation_id = uuid.uuid4().hex
     message = ""
@@ -286,6 +250,7 @@ async def chat(payload: ChatRequest, request: Request) -> dict[str, Any]:
                 message = text.strip()
                 if message.startswith("Error:"):
                     agent_error = message
+                    # Vanna agents do 3-5 LLM requests per question. If we hit limits, it surfaces here.
 
             if hasattr(rich, "rows") and hasattr(rich, "columns"):
                 rows = list(getattr(rich, "rows", []) or [])
@@ -307,9 +272,11 @@ async def chat(payload: ChatRequest, request: Request) -> dict[str, Any]:
     if state.get("db_error"):
         raise HTTPException(status_code=500, detail="Database error while executing the query.")
     if agent_error:
+        # Vanna returns a generic error text for deeper LLM failures (like 429 Rate Limits).
+        # We know Gemini Free tier limits to 15 Requests Per Minute.
         raise HTTPException(
-            status_code=502,
-            detail="LLM service error. Check GROQ_API_KEY and network settings.",
+            status_code=429,
+            detail="Google Gemini Rate Limit Exceeded (15 Requests Per Minute limit). Vanna makes 3-4 LLM calls per question. Please wait 1 full minute.",
         )
     if not sql_query:
         raise HTTPException(status_code=500, detail="LLM failed to generate SQL. Try rephrasing your question.")
@@ -333,10 +300,10 @@ async def chat(payload: ChatRequest, request: Request) -> dict[str, Any]:
     _cache_set(cache_key, response)
     return response
 
+@app.get("/")
+async def read_root():
+    return FileResponse("index.html")
 
-# ---------------------------------------------------------------------------
-# /health
-# ---------------------------------------------------------------------------
 @app.get("/health")
 async def health() -> dict[str, Any]:
     return {
